@@ -3,7 +3,7 @@
 Privacy-first AI agent on AWS Bedrock AgentCore. Self-host the full stack in
 your own AWS account — your data never leaves your infrastructure.
 
-Licensed under the [GNU Affero General Public License v3.0](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE).
 
 ---
 
@@ -133,5 +133,8 @@ stack deploys AWS Budgets rules that:
 
 ## Contributing
 
-PRs welcome. This project is AGPL-3.0 licensed — any modifications you deploy
-as a network service must be made available under the same license.
+PRs welcome. This project is licensed under the Apache License 2.0 — you're
+free to use, modify, and redistribute it (including commercially or as part of
+a larger product), provided you retain the copyright and `NOTICE` attribution.
+The "Littlebat" name and logos are trademarks and are not covered by the
+license.
