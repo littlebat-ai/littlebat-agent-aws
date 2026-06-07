@@ -1,0 +1,12 @@
+# Copy this file to terraform.tfvars and fill in the values.
+# terraform.tfvars is gitignored.
+
+project_name          = "littlebat"
+env                   = "prod"
+region                = "us-east-1"
+cognito_domain_prefix = "your-unique-prefix"   # must be globally unique
+alert_email           = "you@example.com"
+monthly_budget_usd    = 20
+
+# Set after creating the AgentCore runtime (step 3 of the setup guide):
+# agentcore_runtime_arn = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/..."
