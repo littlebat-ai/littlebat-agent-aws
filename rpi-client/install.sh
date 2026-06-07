@@ -47,7 +47,8 @@ if [ ! -f "$HOME/.aws/credentials" ]; then
     echo ""
     echo ">>> AWS credentials not found. Run:"
     echo "    aws configure"
-    echo "    (needs access key from the littlebat-rpi IAM user)"
+    echo "    (use the device access key: terraform output device_access_key_id"
+    echo "     and terraform output -raw device_secret_access_key)"
 fi
 
 # ── 6. Systemd service ────────────────────────────────────────────────────────

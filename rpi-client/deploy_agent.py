@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
-Package, upload, and create/update the Littlebat AgentCore Runtime.
+Package, upload, and create/update the AgentCore Runtime.
 
-The build step runs ON the Pi over SSH (Linux ARM64) so that binary
-dependencies are compiled for the correct platform. Upload to S3 also
-happens from the Pi. The runtime create/update API call runs locally.
+The agent code must be built for Linux ARM64 so its binary dependencies match
+the AgentCore runtime. Two build paths are supported:
+
+  - Docker (default): builds locally using --platform linux/arm64. Requires Docker.
+  - Remote Pi (optional): set PI_HOST (and optionally PI_USER) to build over SSH
+    on a Raspberry Pi. Useful if you don't have Docker but do have a Pi.
+
+Reads infrastructure values from `terraform output` in ../terraform.
 
 Usage:
-    AWS_PROFILE=littlebat python3 rpi-agent/deploy_agent.py
+    python3 deploy_agent.py
+    PI_HOST=192.168.1.50 PI_USER=pi python3 deploy_agent.py   # build on a Pi
 """
 
 import boto3
@@ -16,40 +22,36 @@ import subprocess
 import time
 from pathlib import Path
 
-REGION        = os.environ.get("AWS_REGION", "us-east-1")
-RUNTIME_NAME  = "littlebat_agent"
-MODEL_ID      = "us.amazon.nova-micro-v1:0"
+REGION       = os.environ.get("AWS_REGION", "us-east-1")
+RUNTIME_NAME = os.environ.get("RUNTIME_NAME", "littlebat_agent")
+MODEL_ID     = os.environ.get("MODEL_ID", "us.amazon.nova-micro-v1:0")
+AGENT_NAME   = os.environ.get("AGENT_NAME", "Assistant")
+MEMORIES_PREFIX = os.environ.get("MEMORIES_PREFIX", "agent")
 
-PI_HOST = os.environ.get("PI_HOST", "192.168.0.176")
-PI_USER = os.environ.get("PI_USER", "brian")
-CODE_DIR = Path(__file__).parent / "agent_code"
-S3_KEY   = "littlebat_agent/deployment_package.zip"
+# Optional remote-Pi build target. If PI_HOST is unset, Docker is used.
+PI_HOST = os.environ.get("PI_HOST", "")
+PI_USER = os.environ.get("PI_USER", "pi")
+
+# Agent source lives in ../agent relative to this script.
+CODE_DIR  = Path(__file__).parent.parent / "agent"
+TERRAFORM_DIR = Path(__file__).parent.parent / "terraform"
+S3_KEY    = "agent/deployment_package.zip"
 
 
 def tf_output(key: str) -> str:
     result = subprocess.run(
         ["terraform", "output", "-raw", key],
-        cwd=Path(__file__).parent.parent / "aws" / "terraform",
+        cwd=TERRAFORM_DIR,
         capture_output=True, text=True, check=True,
-        env={**os.environ, "AWS_PROFILE": os.environ.get("AWS_PROFILE", "littlebat")},
     )
     return result.stdout.strip()
-
-
-def _pi_reachable() -> bool:
-    result = subprocess.run(
-        ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
-         f"{PI_USER}@{PI_HOST}", "true"],
-        capture_output=True,
-    )
-    return result.returncode == 0
 
 
 def _build_on_pi(tmp: str) -> str:
     target = f"{PI_USER}@{PI_HOST}"
     local_zip = f"{tmp}/deployment_package.zip"
 
-    print(f"Syncing agent_code/ to {target}:/tmp/agent_code/ ...")
+    print(f"Syncing agent/ to {target}:/tmp/agent_code/ ...")
     subprocess.run(
         ["rsync", "-a", "--delete", str(CODE_DIR) + "/", f"{target}:/tmp/agent_code/"],
         check=True,
@@ -76,7 +78,7 @@ echo "Package: $(du -sh /tmp/deployment_package.zip | cut -f1)"
 def _build_with_docker(tmp: str) -> str:
     """Build ARM64 Linux package locally using Docker with --platform linux/arm64."""
     local_zip = f"{tmp}/deployment_package.zip"
-    print("Building ARM64 Linux package with Docker (Pi unreachable)...")
+    print("Building ARM64 Linux package with Docker...")
     script = (
         "set -euo pipefail && "
         "apt-get update -qq && apt-get install -y -qq zip > /dev/null && "
@@ -100,7 +102,7 @@ def _build_with_docker(tmp: str) -> str:
 def build_and_upload(s3, bucket: str) -> None:
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
-        if _pi_reachable():
+        if PI_HOST:
             local_zip = _build_on_pi(tmp)
         else:
             local_zip = _build_with_docker(tmp)
@@ -154,10 +156,10 @@ def wait_for_ready(client, runtime_id: str, timeout: int = 300) -> dict:
 
 def main():
     print("Reading Terraform outputs...")
-    bucket           = tf_output("agentcore_code_bucket")
-    role_arn         = tf_output("agentcore_runtime_role_arn")
-    usage_table      = tf_output("agent_usage_table")
-    memories_bucket  = tf_output("mobile_memories_bucket")
+    bucket          = tf_output("agentcore_code_bucket")
+    role_arn        = tf_output("agentcore_runtime_role_arn")
+    usage_table     = tf_output("agent_usage_table")
+    memories_bucket = tf_output("memories_bucket")
     print(f"  Bucket          : {bucket}")
     print(f"  Role ARN        : {role_arn}")
     print(f"  Usage table     : {usage_table}")
@@ -166,7 +168,7 @@ def main():
     s3     = boto3.client("s3", region_name=REGION)
     client = boto3.client("bedrock-agentcore-control", region_name=REGION)
 
-    # Build ARM64 Linux package (Pi if reachable, Docker otherwise) and upload
+    # Build ARM64 Linux package (Docker by default, Pi if PI_HOST set) and upload
     build_and_upload(s3, bucket)
 
     artifact = {
@@ -178,11 +180,12 @@ def main():
     }
     network  = {"networkMode": "PUBLIC"}
     env_vars = {
-        "AWS_REGION":       REGION,
-        "MODEL_ID":         MODEL_ID,
-        "USAGE_TABLE":      usage_table,
-        "MEMORIES_BUCKET":  memories_bucket,
-        "MEMORIES_PREFIX":  "rpi-agent/",
+        "AWS_REGION":      REGION,
+        "MODEL_ID":        MODEL_ID,
+        "USAGE_TABLE":     usage_table,
+        "MEMORIES_BUCKET": memories_bucket,
+        "MEMORIES_PREFIX": MEMORIES_PREFIX,
+        "AGENT_NAME":      AGENT_NAME,
     }
     lifecycle = {
         "idleRuntimeSessionTimeout": 600,   # 10 min keep-warm
@@ -225,8 +228,10 @@ def main():
     arn = details["agentRuntimeArn"]
 
     print(f"\nRuntime ARN:\n  {arn}")
-    print(f"\nAdd this to rpi-agent/config.env on the Pi:")
-    print(f"  AGENTCORE_RUNTIME_ARN={arn}")
+    print("\nNext steps:")
+    print(f"  1. Set AGENTCORE_RUNTIME_ARN={arn}")
+    print("     in terraform/terraform.tfvars and run `terraform apply`")
+    print("  2. Set the same ARN in rpi-client/config.env on your device")
 
 
 if __name__ == "__main__":

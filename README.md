@@ -54,29 +54,25 @@ terraform init
 terraform apply
 ```
 
-Note the outputs — you'll need them in the next steps.
+Note the outputs — you'll need them in the next steps. Leave
+`agentcore_runtime_arn` unset for this first apply; you'll fill it in at step 3
+once the runtime exists.
 
-### 2. Create the AgentCore runtime
+### 2. Deploy the agent code
 
-The AgentCore runtime must currently be created via the AWS console or CLI (Terraform
-support is in preview). In the AWS console:
-
-1. Go to **Amazon Bedrock → AgentCore → Agent Runtimes → Create**
-2. Set the execution role to the value of `terraform output agentcore_runtime_role_arn`
-3. Upload the agent code package (see step 3)
-4. Copy the runtime ARN
-
-### 3. Deploy the agent code
+`deploy_agent.py` reads the Terraform outputs, builds an ARM64 Linux package,
+uploads it to S3, and creates (or updates) the AgentCore runtime for you. It
+builds with Docker by default; set `PI_HOST` to build over SSH on a Pi instead.
 
 ```bash
 cd rpi-client
-pip install boto3 bedrock-agentcore
-python deploy_agent.py \
-  --bucket $(cd ../terraform && terraform output -raw agentcore_code_bucket) \
-  --runtime-arn <runtime-arn-from-step-2>
+pip install boto3
+python deploy_agent.py
 ```
 
-### 4. Set the runtime ARN in Terraform
+When it finishes it prints the runtime ARN. Copy it for the next step.
+
+### 3. Wire the runtime ARN into Terraform
 
 Add the runtime ARN to `terraform/terraform.tfvars`:
 
@@ -90,7 +86,7 @@ Then re-apply to wire it into the chat Lambda:
 terraform apply
 ```
 
-### 5. (Optional) Set up the Raspberry Pi client
+### 4. (Optional) Set up the Raspberry Pi client
 
 ```bash
 cd rpi-client
